@@ -30,4 +30,4 @@ python -m gft_subnet --state outputs/local/chain.json run-window --work-dir outp
 
 The local window uses a local chain and two scripted miners. Testnet: install `.[chain]` and see [configs/testnet.example.yaml](configs/testnet.example.yaml).
 
-Proprietary. © G-Factor Technologies.
+Licensed under [Apache-2.0](LICENSE). © 2026 G-Factor Technologies.
