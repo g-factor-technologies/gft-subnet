@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gft-subnet"
+version = "0.1.0"
+description = "Verified on-policy RL subnet: forced sampling, trace replay, slot credit, central GRPO"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "G-Factor Technologies" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Validator replay and the GRPO step; miners running a model need the same stack.
+train = [
+    "torch==2.11.0",
+    "transformers==5.13.0",
+    "trl==1.15.0",
+    "peft==0.19.1",
+    "accelerate==1.14.0",
+    "datasets>=3,<6",
+    "tokenizers",
+]
+chain = ["bittensor>=11"]
+dev = ["pytest>=7.0", "ruff>=0.16,<0.17"]
+
+[project.scripts]
+gft-subnet = "gft_subnet.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F", "E9", "B", "BLE001", "S110", "S112"]

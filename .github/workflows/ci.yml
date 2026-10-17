@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (CPU torch)
+        run: |
+          uv venv
+          uv pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          uv pip install -e ".[train,dev]"
+      - run: uv run --no-sync ruff check src tests
+      - run: uv run --no-sync pytest -q
