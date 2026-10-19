@@ -1,4 +1,4 @@
-"""Subnet window: signed HTTP, local chain, gym loop, GRPO packing, miner weights."""
+"""Subnet window on the DEX test gym: signed HTTP, local chain, gym loop, GRPO packing, miner weights."""
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from gft_subnet.gyms.dex_arbitrage import DexArbitrageTestGym
+from gft_subnet.gyms.dex_arbitrage import backend as backend_module
 from gft_subnet.auth import LocalAuth
 from gft_subnet.chain import ChainError, LocalChain
 from gft_subnet.coordinator import ack_miners, run_window, run_windows
@@ -30,7 +32,6 @@ from gft_subnet.protocol import (
 )
 from gft_subnet.scoring import miner_credits, scores_to_weights
 from gft_subnet.validator import ValidatorRuntime, create_validator_app
-from gft_subnet.gyms.guess_number import GuessNumberGym
 from gft_subnet.training import (
     group_relative_advantages,
     install_bittensor_rollout,
@@ -39,12 +40,18 @@ from gft_subnet.training import (
 )
 
 
+GYM = DexArbitrageTestGym()
 VALIDATOR = "validator"
 MINER_A = "miner-a"
 MINER_B = "miner-b"
 
 
-GYM = GuessNumberGym()
+@pytest.fixture(autouse=True)
+def reference_runtime(monkeypatch):
+    monkeypatch.setenv("SKILLHUB_DEX_ARBITRAGE_MODE", "reference")
+    backend_module.native_runtime_info.cache_clear()
+    yield
+    backend_module.native_runtime_info.cache_clear()
 
 
 def _secrets() -> dict[str, bytes]:
@@ -206,17 +213,17 @@ def test_gym_loop_gold_beats_dummy(tmp_path):
     )
     ack_miners(policy, [gold, dummy])
     gold_episode = run_episode(gym=GYM, 
-        miner=gold, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+        miner=gold, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
     )
     dummy_episode = run_episode(gym=GYM, 
-        miner=dummy, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+        miner=dummy, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
     )
     assert gold_episode.complete
     assert dummy_episode.complete
     assert gold_episode.scripted and dummy_episode.scripted
-    assert gold_episode.reward > 0
+    assert gold_episode.reward == pytest.approx(1.0)
     assert dummy_episode.reward < gold_episode.reward
-    assert gold_episode.turns[0].action["type"] == "guess"
+    assert gold_episode.turns[0].action["type"] == "submit_route"
     assert dummy_episode.turns[0].action["type"] == "inspect_task"
 
 
@@ -236,7 +243,7 @@ def test_policy_mix_is_rejected(tmp_path):
     ack_miners(policy, [miner])
     with pytest.raises(PolicyError, match="mixed policy"):
         run_episode(gym=GYM, 
-            miner=miner, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+            miner=miner, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
         )
 
 
@@ -250,11 +257,11 @@ def test_v_plus_1_requires_acks(tmp_path):
     policy.publish(version=2, adapter_bytes=b"adapter-v2")
     with pytest.raises(PolicyError, match="has not acked"):
         run_episode(gym=GYM, 
-            miner=miner, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+            miner=miner, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
         )
     miner.ack_policy(2, policy.manifest().checksum)
     episode = run_episode(gym=GYM, 
-        miner=miner, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+        miner=miner, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
     )
     assert episode.policy_version == 2
 
@@ -265,7 +272,7 @@ def _on_policy_episode(hotkey: str, reward: float, policy_version: int = 1) -> E
     return Episode(
         episode_id=f"{hotkey}-{reward}",
         hotkey=hotkey,
-        family="guess_16",
+        family="two_pool_cycle",
         task_seed=1,
         generation_seed=0,
         policy_version=policy_version,
@@ -355,7 +362,7 @@ def test_window_weights_follow_accepted_slots_not_reward(tmp_path):
                          actor=ScriptedActor(MINER_B, kind="dummy"))
     result = run_window(gym=GYM, 
         chain=chain, validator_hotkey=VALIDATOR, miners=[gold, dummy], policy=policy,
-        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16"],
+        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle"],
         group_size=4, tasks_per_window=1, train=False,
     )
     # Gold earns higher reward, but both did the same verified work: equal pay.
@@ -393,7 +400,7 @@ def test_window_skips_chain_weight_rate_limit(tmp_path):
         ],
         policy=policy,
         ledger=Ledger(tmp_path / "ledger.sqlite"),
-        families=["guess_16"],
+        families=["two_pool_cycle"],
         # One task, 2 rollouts each: the group always mixes gold and dummy.
         group_size=4,
         tasks_per_window=1,
@@ -433,7 +440,7 @@ def test_validator_chooses_single_use_tasks_in_family_rotation(tmp_path):
                            actor=OnPolicyStubActor(hotkey)) for hotkey in (MINER_A, MINER_B)]
     results = run_windows(gym=GYM, 
         steps=2, chain=chain, validator_hotkey=VALIDATOR, miners=miners, policy=policy,
-        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16", "guess_64"],
+        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle", "triangular_cycle"],
         group_size=2, tasks_per_window=2, train=False,
     )
     tasks = [tuple(task) for result in results for task in result.extras["tasks"]]
@@ -450,7 +457,7 @@ def test_rollouts_are_dealt_in_proportion_to_throughput():
     from gft_subnet.coordinator import assign_rollouts
     from gft_subnet.gym_loop import RolloutSpec
 
-    specs = [RolloutSpec("guess_16", 1, index, f"k{index}") for index in range(16)]
+    specs = [RolloutSpec("two_pool_cycle", 1, index, f"k{index}") for index in range(16)]
     miners = [SimpleNamespace(hotkey=name) for name in ("fast", "slow", "new")]
     assignment = assign_rollouts(specs, miners, {"fast": 300.0, "slow": 100.0}, random.Random(0))
     counts = {hotkey: len(dealt) for hotkey, dealt in assignment.items()}
@@ -467,12 +474,12 @@ def test_config_loads_yaml_families_and_sampling(tmp_path):
 
     args = _parser().parse_args(["run-window"])
     _apply_config(args, {
-        "families": ["guess_64", "guess_16"],
+        "families": ["size_sensitive_cycle", "two_pool_cycle"],
         "seeds": [1],
         "sampling": {"temperature": 1.2, "max_tokens": 256},
         "train_steps": 50,
     })
-    assert args.families[0] == "guess_64"
+    assert args.families[0] == "size_sensitive_cycle"
     assert args.sampling["temperature"] == 1.2
     assert args.steps == 50
 
@@ -484,7 +491,7 @@ def test_task_groups_mix_miners_with_unique_forced_sampling_keys(tmp_path):
                            actor=OnPolicyStubActor(hotkey)) for hotkey in (MINER_A, MINER_B)]
     result = run_window(gym=GYM, 
         chain=chain, validator_hotkey=VALIDATOR, miners=miners, policy=policy,
-        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16"],
+        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle"],
         group_size=4, tasks_per_window=2, train=False,
     )
     assert len(result.episodes) == 8 and result.extras["missing_rollouts"] == 0
@@ -518,7 +525,7 @@ def test_turn_timeout_marks_infra_error(tmp_path):
     ack_miners(policy, [miner])
     started = time.monotonic()
     episode = run_episode(gym=GYM, 
-        miner=miner, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+        miner=miner, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
         turn_timeout_seconds=0.05,
     )
     assert time.monotonic() - started < 0.2
@@ -613,7 +620,7 @@ def test_gym_lora_slots_and_generate_does_not_ship_files(tmp_path):
     assert actor.worn == ["dex_arbitrage-v1", "sql-v1"]
     assert client.get("/health").json()["attestation"]["mode"] == "none"
     sql_turn = {
-        "policy_version": 1, "episode_id": "ep-2", "turn": 0, "family": "guess_16",
+        "policy_version": 1, "episode_id": "ep-2", "turn": 0, "family": "two_pool_cycle",
         "task_seed": 1, "generation_seed": 0, "observation": {}, "messages": [],
         "gym_id": "sql",
     }
@@ -868,14 +875,16 @@ def test_actor_parses_json_and_rejects_stub_adapter(tmp_path):
     assert chat_template_kwargs("Qwen/Qwen3-8B") == {"enable_thinking": False}
     assert chat_template_kwargs("Qwen/Qwen2.5-0.5B-Instruct") == {}
     assert parse_json_action('say {"type":"inspect_task"} please')["type"] == "inspect_task"
-    assert parse_json_action('{"type":"guess","value":7}') == {"type": "guess", "value": 7}
-    assert parse_json_action('{"name":"act","arguments":{"action":{"type":"finalize"}}}') == {
-        "type": "finalize"}
+    assert GYM.normalize_action(parse_json_action(
+        '{"type":"submit_route","pools":["0xabc"],"amount_in_wei":100}',
+    )) == {"type": "submit_route", "pools": ["0xabc"], "amount_in_wei": "100"}
     assert parse_json_action("not json")["type"] == "invalid"
     assert parse_json_action(
         '<think>plan</think>{"type":"inspect_task"}',
     )["type"] == "inspect_task"
-    assert "one line" in GYM.reply_hint
+    from gft_subnet.gyms.dex_arbitrage import JSON_ACTION_REPLY
+    assert "one line" in JSON_ACTION_REPLY
+    assert "min_amount_in_wei" in JSON_ACTION_REPLY
     actor = HuggingFacePolicyActor(hotkey=MINER_A, model_id="stub")
     actor._model = SimpleNamespace()
     adapter = tmp_path / "v1"
@@ -973,12 +982,12 @@ def test_config_preserves_explicit_cli_values_even_when_equal_to_defaults():
 
     args = _parser().parse_args([
         "--netuid", "99", "--network", "test", "run-window", "--group-size", "2",
-        "--version-key", "0", "--family", "guess_16",
+        "--version-key", "0", "--family", "two_pool_cycle",
     ])
     _apply_config(args, {"netuid": 1, "network": "finney", "group_size": 4,
                          "version_key": 7, "families": ["four_hop_cycle"]})
     assert (args.netuid, args.network, args.group_size, args.version_key) == (99, "test", 2, 0)
-    assert args.families == ["guess_16"]
+    assert args.families == ["two_pool_cycle"]
 
 
 def test_sdk_real_result_exposes_new_subnet_in_data():
@@ -993,9 +1002,8 @@ def test_sdk_real_result_exposes_new_subnet_in_data():
 def test_prompts_include_entire_public_snapshot_and_feedback():
     from gft_subnet.gym_loop import _messages
 
-    observations = [GYM.make("guess_16", seed, "train") for seed in (1, 2)]
+    observations = [GYM.make("two_pool_cycle", seed, "train") for seed in (1, 2)]
     initial = [gym.reset_observation() for gym in observations]
-    initial[1]["guesses"] = 1  # two fresh guess tasks share a snapshot; make them differ
     prompts = [_messages(GYM, obs) for obs in initial]
     assert prompts[0] != prompts[1]
     for obs, prompt in zip(initial, prompts, strict=True):
@@ -1003,7 +1011,7 @@ def test_prompts_include_entire_public_snapshot_and_feedback():
         assert json.dumps(obs, sort_keys=True, separators=(",", ":")) in content
         assert "inspect_task" in content
         assert "single JSON object" in content
-    after = observations[0].step({"type": "guess", "value": 8})["observation"]
+    after = observations[0].step({"type": "inspect_evaluation"})["observation"]
     assert _messages(GYM, after) != prompts[0]
 
 
@@ -1080,7 +1088,7 @@ def test_rollouts_of_a_timed_out_miner_are_redealt(tmp_path):
     try:
         result = run_window(gym=GYM, 
             chain=_served_chain(), validator_hotkey=VALIDATOR, miners=[slow, fast],
-            policy=policy, ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16"],
+            policy=policy, ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle"],
             group_size=2, tasks_per_window=1, train=False, turn_timeout_seconds=.05,
         )
         # The slow miner's rollout went to the fast miner; forced sampling makes it equivalent.
@@ -1108,7 +1116,7 @@ def test_miner_protocol_violation_fails_that_miner_not_the_window(tmp_path):
                         actor=OnPolicyStubActor(MINER_B))
     result = run_window(gym=GYM, 
         chain=_served_chain(), validator_hotkey=VALIDATOR, miners=[bad, good], policy=policy,
-        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16"],
+        ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle"],
         group_size=2, tasks_per_window=1, train=False,
     )
     assert result.extras["failed_miners"] == [MINER_A]
@@ -1153,7 +1161,7 @@ def _training_window(tmp_path, monkeypatch, grpo_step, *, trainer=None, ack=None
         chain=_served_chain(), validator_hotkey=VALIDATOR,
         miners=[MinerRuntime(hotkey=hotkey, auth=_auth(hotkey), policy=policy,
                              actor=OnPolicyStubActor(hotkey)) for hotkey in (MINER_A, MINER_B)],
-        policy=policy, ledger=Ledger(tmp_path / "ledger.sqlite"), families=["guess_16"],
+        policy=policy, ledger=Ledger(tmp_path / "ledger.sqlite"), families=["two_pool_cycle"],
         group_size=2, tasks_per_window=1, train=True, model_id="stub", trainer=trainer,
     )
     return result, made, policy
@@ -1222,15 +1230,15 @@ def test_push_failure_after_publish_is_not_reported_as_skipped_training(tmp_path
 def test_follow_up_turns_send_only_changed_observation_fields():
     from gft_subnet.gym_loop import _messages
 
-    gym = GYM.make("guess_16", 1, "train")
+    gym = GYM.make("two_pool_cycle", 1, "train")
     first = gym.reset_observation()
-    after = gym.step({"type": "guess", "value": 8})["observation"]
+    after = gym.step({"type": "inspect_evaluation"})["observation"]
     follow_up = _messages(GYM, after, first)
     assert len(follow_up) == 1 and follow_up[0]["role"] == "user"
     content = follow_up[0]["content"]
     assert "single JSON object" in content
     assert "Action JSON Schema" not in content
-    assert first["instruction"] not in content
+    assert json.dumps(first["snapshot"], sort_keys=True, separators=(",", ":")) not in content
     assert len(content) < len(_messages(GYM, after)[-1]["content"])
 
 
@@ -1260,7 +1268,7 @@ def test_validator_rebuilds_context_and_decodes_text_from_tokens():
 
     tokenizer = _WordTokenizer()
     verifier = TokenTraceVerifier(tokenizer, model_id="stub")
-    request = TurnRequest(1, "ep", 1, "guess_16", 1, 0, {},
+    request = TurnRequest(1, "ep", 1, "two_pool_cycle", 1, 0, {},
                           [{"role": "user", "content": "x"}], prefix_token_ids=[1, 3, 2, 5])
     prompt = turn_prompt_ids(tokenizer, request, model_id="stub")
     assert prompt == [1, 3, 2, 5, 1, 3, 2]
@@ -1285,7 +1293,7 @@ def test_untrusted_trace_is_an_infra_error_not_a_scored_episode(tmp_path):
     miner.policy = policy
     ack_miners(policy, [miner])
     episode = run_episode(gym=GYM, 
-        miner=miner, family="guess_16", task_seed=1, generation_seed=0, policy=policy,
+        miner=miner, family="two_pool_cycle", task_seed=1, generation_seed=0, policy=policy,
         verifier=TokenTraceVerifier(_WordTokenizer(), model_id="stub"),
     )
     assert episode.infra_error and "validator-built context" in episode.infra_error
@@ -1301,8 +1309,8 @@ def test_forced_pick_is_the_only_legal_token():
         sampling_key,
     )
 
-    key = sampling_key("window", "guess_16", 5, "checksum", 0)
-    assert key != sampling_key("window", "guess_16", 5, "checksum", 1)
+    key = sampling_key("window", "two_pool_cycle", 5, "checksum", 0)
+    assert key != sampling_key("window", "two_pool_cycle", 5, "checksum", 1)
     assert forced_uniform(key, 0, 3) == forced_uniform(key, 0, 3) != forced_uniform(key, 0, 4)
     torch.manual_seed(0)
     logits = torch.randn(6, 50)
@@ -1377,7 +1385,7 @@ def test_quarantined_miner_gets_no_slots(tmp_path):
         chain=_served_chain(), validator_hotkey=VALIDATOR,
         miners=[MinerRuntime(hotkey=hotkey, auth=_auth(hotkey), policy=policy,
                              actor=OnPolicyStubActor(hotkey)) for hotkey in (MINER_A, MINER_B)],
-        policy=policy, ledger=ledger, families=["guess_16"],
+        policy=policy, ledger=ledger, families=["two_pool_cycle"],
         group_size=2, tasks_per_window=1, train=False,
     )
     assert result.extras["quarantined_miners"] == [MINER_A]
@@ -1419,7 +1427,7 @@ def test_miner_http_generates_a_batch_in_request_order(tmp_path):
     ack_miners(policy, [runtime])
     client = TestClient(create_miner_app(runtime))
     validator = _auth(VALIDATOR)
-    turns = [TurnRequest(1, f"ep-{i}", 0, "guess_16", 1, i, {}, []).to_dict() for i in range(3)]
+    turns = [TurnRequest(1, f"ep-{i}", 0, "two_pool_cycle", 1, i, {}, []).to_dict() for i in range(3)]
     response = _signed_post(client, validator, "/v1/generate_batch", {"requests": turns})
     assert response.status_code == 200
     assert [item["episode_id"] for item in response.json()["responses"]] == ["ep-0", "ep-1", "ep-2"]
@@ -1454,14 +1462,14 @@ def test_group_runs_in_lockstep_with_one_call_per_turn(tmp_path):
 
     miner = MinerRuntime(hotkey=MINER_A, auth=_auth(MINER_A), policy=policy, actor=Finalizer())
     ack_miners(policy, [miner])
-    specs = [RolloutSpec("guess_16", 3, 0, "k0"), RolloutSpec("guess_16", 3, 1, "k1"),
-             RolloutSpec("guess_64", 4, 2, "k2")]
+    specs = [RolloutSpec("two_pool_cycle", 3, 0, "k0"), RolloutSpec("two_pool_cycle", 3, 1, "k1"),
+             RolloutSpec("triangular_cycle", 4, 2, "k2")]
     episodes = run_rollouts(gym=GYM, miner=miner, rollouts=specs, policy=policy)
     assert batches == [[0, 1, 2], [1, 2]]
     assert [len(ep.turns) for ep in episodes] == [1, 2, 2]
     assert all(ep.infra_error is None and ep.complete for ep in episodes)
     assert [(ep.family, ep.sampling_key) for ep in episodes] == [
-        ("guess_16", "k0"), ("guess_16", "k1"), ("guess_64", "k2")]
+        ("two_pool_cycle", "k0"), ("two_pool_cycle", "k1"), ("triangular_cycle", "k2")]
 
 
 def test_forced_sampling_tolerance_ignores_boundary_noise_but_bounds_swaps():

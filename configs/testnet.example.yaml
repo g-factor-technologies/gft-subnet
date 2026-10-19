@@ -1,5 +1,5 @@
 # python -m gft_subnet --config configs/testnet.example.yaml --chain test --wallet owner run-window --train ...
-gym: guess_number
+gym: dex_arbitrage  # built-in test gym
 network: test
 netuid: 572
 base_model: Qwen/Qwen3-14B
@@ -9,8 +9,10 @@ group_size: 8
 tasks_per_window: 2
 # Families the validator rotates through; each task uses the next unplayed seed.
 families:
-  - guess_16
-  - guess_64
+  - size_sensitive_cycle
+  - two_pool_cycle
+  - triangular_cycle
+  - competing_cycles
 train_steps: 50
 turn_timeout_seconds: 180
 version_key: 0
