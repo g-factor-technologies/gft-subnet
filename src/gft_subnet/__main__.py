@@ -46,7 +46,7 @@ def _apply_config(args: argparse.Namespace, config: dict[str, Any]) -> None:
         "group_size": ("group_size", 8), "turn_timeout": ("turn_timeout_seconds", 30.0),
         "tasks_per_window": ("tasks_per_window", 2),
         "model": ("base_model", None), "version_key": ("version_key", 0),
-        "device": ("device", "cpu"), "gym": ("gym", "guess_number"),
+        "device": ("device", "cpu"), "gym": ("gym", "dex_arbitrage"),
         "confidential_compute": ("confidential_compute", False),
     }
     for name, (key, fallback) in defaults.items():
@@ -86,7 +86,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--netuid", type=int, default=None)
     parser.add_argument("--hotkey", default="validator")
     parser.add_argument("--gym", default=None,
-                        help="'guess_number' (built in) or 'package.module:GymClass'")
+                        help="'dex_arbitrage' (built-in test gym) or 'package.module:GymClass'")
     parser.add_argument("--gym-id", default=None, dest="gym_id")
     parser.add_argument(
         "--confidential-compute", default=None, action=argparse.BooleanOptionalAction,

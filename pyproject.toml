@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gft-subnet"
-version = "0.1.0"
+version = "0.2.0"
 description = "Verified on-policy RL subnet: forced sampling, trace replay, slot credit, central GRPO"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,3 +46,5 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["F", "E9", "B", "BLE001", "S110", "S112"]
+# Same as GFT Studio, where the DEX test gym comes from: zip(strict=) is style here.
+ignore = ["B905"]

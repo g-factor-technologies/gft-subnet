@@ -57,14 +57,14 @@ class Gym:
 
 
 def load_gym(spec: str) -> Gym:
-    """``"guess_number"`` (built in) or ``"package.module:ClassName"`` (plug-in)."""
-    if spec in {"", "guess_number"}:
-        from gft_subnet.gyms.guess_number import GuessNumberGym
+    """``"dex_arbitrage"`` (the built-in test gym) or ``"package.module:ClassName"`` (plug-in)."""
+    if spec in {"", "dex_arbitrage"}:
+        from gft_subnet.gyms.dex_arbitrage import DexArbitrageTestGym
 
-        return GuessNumberGym()
+        return DexArbitrageTestGym()
     module, _, name = spec.partition(":")
     if not module or not name:
-        raise ValueError(f"gym spec {spec!r} must be 'guess_number' or 'module:ClassName'")
+        raise ValueError(f"gym spec {spec!r} must be 'dex_arbitrage' or 'module:ClassName'")
     gym = getattr(importlib.import_module(module), name)()
     if not isinstance(gym, Gym):
         raise TypeError(f"{spec} is not a gft_subnet.gym.Gym")

@@ -1,1 +1,1 @@
-"""Reference gyms shipped with the package."""
+"""Gyms shipped with the package: only the DEX arbitrage test gym."""

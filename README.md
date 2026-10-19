@@ -18,7 +18,7 @@ Protocol: [docs/protocol.md](docs/protocol.md).
 
 ## Gyms
 
-The validator runs the gym; miners never receive gym code. Scoring and replay do not depend on the gym. A gym subclasses `gft_subnet.gym.Gym` and is selected with `--gym package.module:ClassName`. The package ships one reference gym, `guess_number`; production gyms are private plug-ins.
+The validator runs the gym; miners never receive gym code. Scoring and replay do not depend on the gym. A gym subclasses `gft_subnet.gym.Gym` and is selected with `--gym package.module:ClassName`. The package ships one **test gym**, `dex_arbitrage` ([gyms/dex_arbitrage](src/gft_subnet/gyms/dex_arbitrage)): synthetic, offline DEX routing tasks graded by exact integer AMM math. It exists to exercise the protocol on a local chain and testnet; it is not a product or a trading strategy. Production gyms are private plug-ins.
 
 ## Quick start
 
